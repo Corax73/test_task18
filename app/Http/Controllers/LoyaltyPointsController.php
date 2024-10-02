@@ -7,60 +7,63 @@ use App\Models\LoyaltyAccount;
 use App\Models\LoyaltyPointsTransaction;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Validator;
+use Illuminate\Validation\Rule;
 
 class LoyaltyPointsController extends Controller
 {
-    public function deposit()
+    public function deposit(Request $request)
     {
-        $data = $_POST;
+        $err = '';
+        $validated = $this->validate($request, 'deposit', 'Wrong account parameters');
 
-        Log::info('Deposit transaction input: ' . print_r($data, true));
+        Log::info('Deposit transaction input: ' . $validated);
+        if ($validated && $account = LoyaltyAccount::where($validated['account_type'], $validated['account_id'])->firstOrFail()) {
+            if ($account->active) {
+                $transaction = LoyaltyPointsTransaction::performPaymentLoyaltyPoints(
+                    $account->id,
+                    $validated['loyalty_points_rule'],
+                    $validated['description'],
+                    $validated['payment_id'],
+                    $validated['payment_amount'],
+                    $validated['payment_time']
+                );
+                $this->transactionProcessing($transaction, $account);
 
-        $type = $data['account_type'];
-        $id = $data['account_id'];
-        if (($type == 'phone' || $type == 'card' || $type == 'email') && $id != '') {
-            if ($account = LoyaltyAccount::where($type, '=', $id)->first()) {
-                if ($account->active) {
-                    $transaction =  LoyaltyPointsTransaction::performPaymentLoyaltyPoints($account->id, $data['loyalty_points_rule'], $data['description'], $data['payment_id'], $data['payment_amount'], $data['payment_time']);
-                    Log::info($transaction);
-                    if ($account->email != '' && $account->email_notification) {
-                        Mail::to($account)->send(new LoyaltyPointsReceived($transaction->points_amount, $account->getBalance()));
-                    }
-                    if ($account->phone != '' && $account->phone_notification) {
-                        // instead SMS component
-                        Log::info('You received' . $transaction->points_amount . 'Your balance' . $account->getBalance());
-                    }
-                    return $transaction;
-                } else {
-                    Log::info('Account is not active');
-                    return response()->json(['message' => 'Account is not active'], 400);
-                }
+                return $transaction;
             } else {
-                Log::info('Account is not found');
-                return response()->json(['message' => 'Account is not found'], 400);
+                $err = 'Account is not active';
             }
         } else {
-            Log::info('Wrong account parameters');
-            throw new \InvalidArgumentException('Wrong account parameters');
+            $err = 'Account is not found';
+        }
+
+        if (!empty($err)) {
+            Log::info($err);
+            return response()->json(['message' => $err], 400);
         }
     }
 
-    public function cancel()
+    public function cancel(Request $request)
     {
-        $data = $_POST;
+        $err = '';
+        $validated = $this->validate($request, 'cancel');
 
-        $reason = $data['cancellation_reason'];
-
-        if ($reason == '') {
-            return response()->json(['message' => 'Cancellation reason is not specified'], 400);
+        if (!empty($validated['cancellation_reason'])) {
+            $err = 'Cancellation reason is not specified';
         }
 
-        if ($transaction = LoyaltyPointsTransaction::where('id', '=', $data['transaction_id'])->where('canceled', '=', 0)->first()) {
+        if ($transaction = LoyaltyPointsTransaction::where('id', $validated['transaction_id'])->where('canceled', 0)->firstOrFail()) {
             $transaction->canceled = time();
-            $transaction->cancellation_reason = $reason;
+            $transaction->cancellation_reason = $validated['cancellation_reason'];
             $transaction->save();
         } else {
-            return response()->json(['message' => 'Transaction is not found'], 400);
+            $err = 'Transaction is not found';
+        }
+
+        if (!empty($err)) {
+            return response()->json(['message' => $err], 400);
         }
     }
 
@@ -98,6 +101,59 @@ class LoyaltyPointsController extends Controller
         } else {
             Log::info('Wrong account parameters');
             throw new \InvalidArgumentException('Wrong account parameters');
+        }
+    }
+
+    private function validate(Request $request, string $rulesCode, string $errString = 'check request parameters'): array
+    {
+        $rules = $this->getRules($rulesCode);
+        $err = '';
+        if ($rules) {
+            $validator = Validator::make($request->all(), $rules);
+            if ($validator->fails()) {
+                $err = $errString;
+            }
+        } else {
+            $err = 'no validation rules found';
+        }
+
+        if (!empty($err)) {
+            Log::info($err);
+            throw new \InvalidArgumentException($err);
+        } else {
+            return $validator ? $validator->validated() : [];
+        }
+    }
+
+    private function getRules(string $code): array
+    {
+        $rules = [
+            'deposit' => [
+                'account_type' => ['required', 'string',  Rule::in(['phone', 'card', 'email'])],
+                'account_id' => ['required', 'integer', 'gt:0'],
+                'loyalty_points_rule' => ['required', 'string', 'min:3'],
+                'description' => ['required', 'string', 'min:3'],
+                'payment_id' => ['present', 'string', 'nullable'],
+                'payment_amount' => ['present', 'decimal:2', 'nullable'],
+                'payment_time' => ['present', 'date', 'nullable'],
+            ],
+            'cancel' => [
+                'transaction_id' => ['required', 'integer', 'gt:0'],
+                'cancellation_reason' => ['present', 'string', 'nullable'],
+            ]
+        ];
+        return isset($rules[$code]) ? $rules[$code] : [];
+    }
+
+    private function transactionProcessing(LoyaltyPointsTransaction $transaction, LoyaltyAccount $account): void
+    {
+        Log::info($transaction);
+        if ($account->email != '' && $account->email_notification) {
+            Mail::to($account)->send(new LoyaltyPointsReceived($transaction->points_amount, $account->getBalance()));
+        }
+        if ($account->phone != '' && $account->phone_notification) {
+            // instead SMS component
+            Log::info('You received' . $transaction->points_amount . 'Your balance' . $account->getBalance());
         }
     }
 }

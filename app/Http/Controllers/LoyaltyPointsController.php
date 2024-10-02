@@ -78,24 +78,24 @@ class LoyaltyPointsController extends Controller
         if ($account = LoyaltyAccount::where($validated['account_type'], $validated['account_id'])->firstOrFail()) {
             if ($account->active) {
                 if ($validated['points_amount'] <= 0) {
-                    $toLog = 'Wrong loyalty points amount: ' . $validated['points_amount'];
                     $err = 'Wrong loyalty points amount';
+                    $toLog = $err . ': ' . $validated['points_amount'];
                 }
                 if ($account->getBalance() < $validated['points_amount']) {
-                    $toLog = 'Insufficient funds: ' . $validated['points_amount'];
-                    $err =  'Insufficient funds';
+                    $err = 'Insufficient funds';
+                    $toLog = $err . ': ' . $validated['points_amount'];
                 }
 
                 $transaction = LoyaltyPointsTransaction::withdrawLoyaltyPoints($account->id, $validated['points_amount'], $validated['description']);
                 Log::info($transaction);
                 return $transaction;
             } else {
-                $toLog = 'Account is not active: ' . $validated['account_type'] . ' ' . $validated['account_id'];
-                $err =  'Account is not active';
+                $err = 'Account is not active';
+                $toLog = $err . ': ' . $validated['account_type'] . ' ' . $validated['account_id'];
             }
         } else {
-            $toLog = 'Account is not found:' . $validated['account_type'] . ' ' . $validated['account_id'];
             $err = 'Account is not found';
+            $toLog = $err . ':' . $validated['account_type'] . ' ' . $validated['account_id'];
         }
 
         if (!empty($toLog) && !empty($err)) {

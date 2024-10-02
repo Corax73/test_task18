@@ -67,43 +67,49 @@ class LoyaltyPointsController extends Controller
         }
     }
 
-    public function withdraw()
+    public function withdraw(Request $request)
     {
-        $data = $_POST;
+        $toLog = '';
+        $err = '';
+        $validated = $this->validate($request, 'withdraw', 'Wrong account parameters');
 
-        Log::info('Withdraw loyalty points transaction input: ' . print_r($data, true));
+        Log::info('Withdraw loyalty points transaction input: ' . $validated);
 
-        $type = $data['account_type'];
-        $id = $data['account_id'];
-        if (($type == 'phone' || $type == 'card' || $type == 'email') && $id != '') {
-            if ($account = LoyaltyAccount::where($type, '=', $id)->first()) {
-                if ($account->active) {
-                    if ($data['points_amount'] <= 0) {
-                        Log::info('Wrong loyalty points amount: ' . $data['points_amount']);
-                        return response()->json(['message' => 'Wrong loyalty points amount'], 400);
-                    }
-                    if ($account->getBalance() < $data['points_amount']) {
-                        Log::info('Insufficient funds: ' . $data['points_amount']);
-                        return response()->json(['message' => 'Insufficient funds'], 400);
-                    }
-
-                    $transaction = LoyaltyPointsTransaction::withdrawLoyaltyPoints($account->id, $data['points_amount'], $data['description']);
-                    Log::info($transaction);
-                    return $transaction;
-                } else {
-                    Log::info('Account is not active: ' . $type . ' ' . $id);
-                    return response()->json(['message' => 'Account is not active'], 400);
+        if ($account = LoyaltyAccount::where($validated['account_type'], $validated['account_id'])->firstOrFail()) {
+            if ($account->active) {
+                if ($validated['points_amount'] <= 0) {
+                    $toLog = 'Wrong loyalty points amount: ' . $validated['points_amount'];
+                    $err = 'Wrong loyalty points amount';
                 }
+                if ($account->getBalance() < $validated['points_amount']) {
+                    $toLog = 'Insufficient funds: ' . $validated['points_amount'];
+                    $err =  'Insufficient funds';
+                }
+
+                $transaction = LoyaltyPointsTransaction::withdrawLoyaltyPoints($account->id, $validated['points_amount'], $validated['description']);
+                Log::info($transaction);
+                return $transaction;
             } else {
-                Log::info('Account is not found:' . $type . ' ' . $id);
-                return response()->json(['message' => 'Account is not found'], 400);
+                $toLog = 'Account is not active: ' . $validated['account_type'] . ' ' . $validated['account_id'];
+                $err =  'Account is not active';
             }
         } else {
-            Log::info('Wrong account parameters');
-            throw new \InvalidArgumentException('Wrong account parameters');
+            $toLog = 'Account is not found:' . $validated['account_type'] . ' ' . $validated['account_id'];
+            $err = 'Account is not found';
+        }
+
+        if (!empty($toLog) && !empty($err)) {
+            Log::info($toLog);
+            return response()->json(['message' => $err], 400);
         }
     }
 
+    /**
+     * Based on the passed line of rules code, an array of rules is obtained.
+     * If successful, it starts validation through the Validator object.
+     * If the validator fails, it logs and throws an exception.
+     * If successful, returns an array with request parameters or empty.
+     */
     private function validate(Request $request, string $rulesCode, string $errString = 'check request parameters'): array
     {
         $rules = $this->getRules($rulesCode);
@@ -125,6 +131,9 @@ class LoyaltyPointsController extends Controller
         }
     }
 
+    /**
+     * Based on the passed string, returns an array of validation rules, if the key exists, or an empty array.
+     */
     private function getRules(string $code): array
     {
         $rules = [
@@ -140,11 +149,21 @@ class LoyaltyPointsController extends Controller
             'cancel' => [
                 'transaction_id' => ['required', 'integer', 'gt:0'],
                 'cancellation_reason' => ['present', 'string', 'nullable'],
+            ],
+            'withdraw' => [
+                'account_type' => ['required', 'string',  Rule::in(['phone', 'card', 'email'])],
+                'account_id' => ['required', 'integer', 'gt:0'],
+                'points_amount' => ['required', 'decimal:2'],
+                'description' => ['required', 'string', 'min:3']
             ]
         ];
         return isset($rules[$code]) ? $rules[$code] : [];
     }
 
+    /**
+     * Logs the passed transaction object.
+     * Checks the properties of the passed account object and causes an email or logging to be sent.
+     */
     private function transactionProcessing(LoyaltyPointsTransaction $transaction, LoyaltyAccount $account): void
     {
         Log::info($transaction);

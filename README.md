@@ -43,3 +43,9 @@ docker run -it --user www -v ${pwd}:/var/www test-task-loyalty-service /bin/sh -
 cd test-task-loyalty-service && docker-compose up
 docker run -it --user www -v $PWD:/var/www test-task-loyalty-service /bin/sh -lc "composer install && cp .env.example .env && php artisan key:generate && php artisan migrate"
 ```
+
+## Описание моего решения
+
+- Убрать повторяющийся код.
+- Разнести код по отдельным методам придерживаясь принципа единой ответсвенности.
+- Желательно не делать все в контроллере - есть классы запросов для валидации, есть события моделей, нужно использовать их.
